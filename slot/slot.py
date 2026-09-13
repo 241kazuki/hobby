@@ -8,8 +8,13 @@ from itertools import product
 # ==========================================
 
 INITIAL_CREDIT = 50
+
+# 通常ゲーム
 BET_AMOUNT = 3
 
+# BIG BONUS
+BIG_BET_AMOUNT = 1
+BIG_TARGET_PAYOUT = 100
 
 # ==========================================
 # STEP 1：リール配列
@@ -57,6 +62,10 @@ class Role(Enum):
     REPLAY = "リプレイ"
     MISS = "ハズレ"
 
+class GameState(Enum):
+    NORMAL = "通常"
+    BIG = "BIG BONUS"
+
 
 LOTTERY_TABLE = [
     (100, Role.BIG),
@@ -66,18 +75,30 @@ LOTTERY_TABLE = [
     (5400, Role.MISS)
 ]
 
+BIG_LOTTERY_TABLE = [
+    (7000, Role.BELL),      # 70%
+    (1000, Role.CHERRY),    # 10%
+    (1500, Role.REPLAY),    # 15%
+    (500, Role.MISS)        # 5%
+]
 
 # ==========================================
 # STEP 3：内部抽選
 # ==========================================
 
-def lottery():
+def lottery(state):
+
+
+    if state == GameState.BIG:
+        table = BIG_LOTTERY_TABLE
+    else:
+        table = LOTTERY_TABLE
 
     random_value = random.randrange(10000)
 
     border = 0
 
-    for probability, role in LOTTERY_TABLE:
+    for probability, role in table:
 
         border += probability
 
@@ -193,7 +214,7 @@ def show_screen(screen):
 # ==========================================
 
 PAYOUT_TABLE = {
-    "7": 100,
+    "7": 0,
     "ベル": 10,
     "チェリー": 5,
     "リプレイ": 0
@@ -291,11 +312,14 @@ def choose_stop_positions(current_positions, role):
 
     target_symbol = role_to_symbol(role)
 
-    ideal_candidates = []
-    acceptable_candidates = []
+    target_candidates = []
+    safe_candidates = []
 
-    # 0～4コマ
-    # 3リールで125通り
+    # ======================================
+    # 0～4コマ × 3リール
+    # 125通りを全探索
+    # ======================================
+
     for slides in product(
         range(5),
         repeat=3
@@ -322,119 +346,172 @@ def choose_stop_positions(current_positions, role):
             screen
         )
 
-        # ----------------------------------
-        # ハズレ
-        # ----------------------------------
+        # ==================================
+        # 何も揃っていない安全な停止位置
+        # ==================================
 
-        if role == Role.MISS:
+        if len(wins) == 0:
 
-            if len(wins) == 0:
-
-                ideal_candidates.append(
-                    (
-                        sum(slides),
-                        max(slides),
-                        slides,
-                        stopped_positions
-                    )
-                )
-
-        # ----------------------------------
-        # 当選
-        # ----------------------------------
-
-        else:
-
-            target_wins = []
-            other_wins = []
-
-            for win in wins:
-
-                line_name, symbol, payout = win
-
-                if symbol == target_symbol:
-
-                    target_wins.append(
-                        win
-                    )
-
-                else:
-
-                    other_wins.append(
-                        win
-                    )
-
-            if len(target_wins) > 0:
-
-                candidate = (
+            safe_candidates.append(
+                (
                     sum(slides),
                     max(slides),
                     slides,
                     stopped_positions
                 )
+            )
 
-                acceptable_candidates.append(
-                    candidate
+        # ==================================
+        # ハズレなら
+        # 入賞なしだけを採用
+        # ==================================
+
+        if role == Role.MISS:
+            continue
+
+        # ==================================
+        # 当選役の成立確認
+        # ==================================
+
+        target_wins = []
+
+        other_wins = []
+
+        for win in wins:
+
+            line_name, symbol, payout = win
+
+            if symbol == target_symbol:
+                target_wins.append(win)
+
+            else:
+                other_wins.append(win)
+
+        # ==================================
+        # 当選役だけ成立している場合のみOK
+        #
+        # 例：
+        # BIG + ベル → NG
+        # BIGのみ     → OK
+        # ==================================
+
+        if (
+            len(target_wins) > 0
+            and len(other_wins) == 0
+        ):
+
+            target_candidates.append(
+                (
+                    sum(slides),
+                    max(slides),
+                    slides,
+                    stopped_positions
                 )
-
-                if len(other_wins) == 0:
-
-                    ideal_candidates.append(
-                        candidate
-                    )
+            )
 
     # ======================================
-    # 最適候補選択
+    # ハズレ
     # ======================================
 
-    if len(ideal_candidates) > 0:
+    if role == Role.MISS:
 
-        candidates = ideal_candidates
+        if len(safe_candidates) > 0:
+
+            safe_candidates.sort(
+                key=lambda x: (
+                    x[0],
+                    x[1],
+                    x[2]
+                )
+            )
+
+            best = safe_candidates[0]
+
+            return (
+                best[3],
+                list(best[2]),
+                True
+            )
+
+    # ======================================
+    # 当選役を成立できる
+    # ======================================
 
     else:
 
-        candidates = acceptable_candidates
+        if len(target_candidates) > 0:
 
-    if len(candidates) > 0:
-
-        candidates.sort(
-            key=lambda x: (
-                x[0],
-                x[1],
-                x[2]
+            target_candidates.sort(
+                key=lambda x: (
+                    x[0],
+                    x[1],
+                    x[2]
+                )
             )
-        )
 
-        best = candidates[0]
+            best = target_candidates[0]
 
-        stopped_positions = best[3]
-        slides = list(best[2])
+            return (
+                best[3],
+                list(best[2]),
+                True
+            )
 
-        return (
-            stopped_positions,
-            slides,
-            True
-        )
+        # ==================================
+        # 当選役を引き込めない場合
+        #
+        # 別役を成立させず、
+        # 安全なハズレ目を選択する
+        # ==================================
 
-    # 制御できなかった
+        if len(safe_candidates) > 0:
+
+            safe_candidates.sort(
+                key=lambda x: (
+                    x[0],
+                    x[1],
+                    x[2]
+                )
+            )
+
+            best = safe_candidates[0]
+
+            return (
+                best[3],
+                list(best[2]),
+                False
+            )
+
+    # 基本的にはここには来ない
     return (
         current_positions,
         [0, 0, 0],
         False
     )
 
-
 # ==========================================
 # STEP 7：1ゲーム
 # ==========================================
 
-def play_game(credit, replay_pending):
+def play_game(
+    credit,
+    replay_pending,
+    state,
+    big_payout,
+    big_pending
+):
+
+    state_before = state
 
     print()
     print("====================================")
 
+    print(
+        f"GAME MODE : {state.value}"
+    )
+
     # ======================================
-    # BET処理
+    # BET
     # ======================================
 
     if replay_pending:
@@ -442,46 +519,136 @@ def play_game(credit, replay_pending):
         print("★ REPLAY GAME ★")
         print("BET不要でゲーム開始")
 
-        # 前ゲームのREPLAYを消費
         replay_pending = False
 
     else:
 
-        credit -= BET_AMOUNT
+        if state == GameState.BIG:
+            bet = BIG_BET_AMOUNT
+
+        else:
+            bet = BET_AMOUNT
+
+        credit -= bet
 
         print(
-            f"{BET_AMOUNT}枚BETしました。"
+            f"{bet}枚BETしました。"
         )
 
     print(
         f"CREDIT : {credit}"
     )
 
+    if state == GameState.BIG:
+
+        print(
+            f"BIG獲得枚数 : "
+            f"{big_payout}"
+            f" / {BIG_TARGET_PAYOUT}"
+        )
+
+    # BIG成立中表示
+    if (
+        state == GameState.NORMAL
+        and big_pending
+    ):
+
+        print()
+        print("★ BIG成立中 ★")
+        print("7揃い待ち")
+
     print("====================================")
+
 
     # ======================================
     # 内部抽選
     # ======================================
 
-    random_value, role = lottery()
+    new_big_hit = False
+
+    # ======================================
+    # BIG成立中なら
+    # 新しい通常抽選は行わず
+    # BIGを持ち越す
+    # ======================================
+
+    if (
+        state == GameState.NORMAL
+        and big_pending
+    ):
+
+        random_value = -1
+        role = Role.BIG
+
+    else:
+
+        random_value, role = lottery(
+            state
+        )
+
+        # ==================================
+        # 新しくBIG内部当選
+        # ==================================
+
+        if (
+            state == GameState.NORMAL
+            and role == Role.BIG
+        ):
+
+            big_pending = True
+            new_big_hit = True
 
     print()
     print("====================================")
     print("内部抽選")
     print("====================================")
 
-    print(
-        f"抽選乱数 : {random_value}"
-    )
+    if random_value == -1:
+
+        print(
+            "抽選乱数 : 持ち越し"
+        )
+
+    else:
+
+        print(
+            f"抽選乱数 : {random_value}"
+        )
 
     print(
         f"当選役   : {role.value}"
     )
 
+
+    # ======================================
+    # BIG告知
+    # ======================================
+
+    if new_big_hit:
+
+        print()
+        print("####################################")
+        print("        ★ BONUS 確定 ★")
+        print("####################################")
+        print()
+        print("BIG内部当選！")
+        print("7を狙ってください！")
+
+    elif (
+        state == GameState.NORMAL
+        and big_pending
+    ):
+
+        print()
+        print("------------------------------------")
+        print("        ★ BIG成立中 ★")
+        print("------------------------------------")
+        print("BIG当選を持ち越しています。")
+        print("7を狙ってください。")
+
+
     # ======================================
     # STOP入力位置
-    #
-    # 現在はランダム
     # ======================================
 
     current_positions = [
@@ -498,6 +665,7 @@ def play_game(credit, replay_pending):
         )
     ]
 
+
     # ======================================
     # リール制御
     # ======================================
@@ -510,6 +678,7 @@ def play_game(credit, replay_pending):
         current_positions,
         role
     )
+
 
     # ======================================
     # STOP
@@ -543,8 +712,9 @@ def play_game(credit, replay_pending):
             f"{stopped_positions[i]}"
         )
 
+
     # ======================================
-    # 画面表示
+    # 画面作成
     # ======================================
 
     screen = create_screen(
@@ -554,6 +724,7 @@ def play_game(credit, replay_pending):
     show_screen(
         screen
     )
+
 
     # ======================================
     # 入賞判定
@@ -574,8 +745,15 @@ def play_game(credit, replay_pending):
 
         for line_name, symbol, payout in wins:
 
-            # REPLAY
-            if symbol == "リプレイ":
+            if symbol == "7":
+
+                print(
+                    f"{line_name}ライン"
+                    f" → 7揃い"
+                    f" → BIG BONUS"
+                )
+
+            elif symbol == "リプレイ":
 
                 print(
                     f"{line_name}ライン"
@@ -583,7 +761,6 @@ def play_game(credit, replay_pending):
                     f" → 再遊技"
                 )
 
-            # 通常払い出し
             else:
 
                 print(
@@ -591,6 +768,7 @@ def play_game(credit, replay_pending):
                     f" → {symbol}揃い"
                     f" → {payout}枚"
                 )
+
 
     # ======================================
     # 払い出し
@@ -601,35 +779,146 @@ def play_game(credit, replay_pending):
     if total_payout > 0:
 
         print()
+
         print(
             f"払い出し : "
             f"{total_payout}枚"
         )
 
+
     # ======================================
-    # リプレイ判定
+    # REPLAY
     # ======================================
 
-    replay_hit = False
-
-    for line_name, symbol, payout in wins:
-
-        if symbol == "リプレイ":
-
-            replay_hit = True
+    replay_hit = any(
+        symbol == "リプレイ"
+        for line_name, symbol, payout
+        in wins
+    )
 
     if replay_hit:
 
         replay_pending = True
 
         print()
-        print(
-            "★ REPLAY ★"
-        )
+        print("★ REPLAY ★")
 
         print(
             "次ゲームはBETなしで遊べます。"
         )
+
+
+    # ======================================
+    # 7揃い確認
+    # ======================================
+
+    big_hit = any(
+        symbol == "7"
+        for line_name, symbol, payout
+        in wins
+    )
+
+
+    # ======================================
+    # BIG BONUS開始
+    # ======================================
+
+    if (
+        state_before == GameState.NORMAL
+        and big_pending
+        and big_hit
+    ):
+
+        state = GameState.BIG
+
+        big_pending = False
+
+        big_payout = 0
+
+        replay_pending = False
+
+        print()
+        print("####################################")
+        print("        ★ BIG BONUS ★")
+        print("####################################")
+
+        print()
+        print(
+            "7揃い！"
+        )
+
+        print(
+            "BIG BONUS開始！"
+        )
+
+        print(
+            f"{BIG_TARGET_PAYOUT}枚以上の"
+            f"払い出しで終了します。"
+        )
+
+
+    # ======================================
+    # BIG持ち越し
+    # ======================================
+
+    elif (
+        state_before == GameState.NORMAL
+        and big_pending
+        and not big_hit
+    ):
+
+        print()
+        print("####################################")
+        print("        ★ BIG 持ち越し ★")
+        print("####################################")
+
+        print()
+        print(
+            "今回は7を揃えられませんでした。"
+        )
+
+        print(
+            "BIG当選は次ゲームへ持ち越します。"
+        )
+
+
+    # ======================================
+    # BIG BONUS中
+    # ======================================
+
+    elif state_before == GameState.BIG:
+
+        big_payout += total_payout
+
+        print()
+        print(
+            f"BIG獲得枚数 : "
+            f"{big_payout}"
+            f" / {BIG_TARGET_PAYOUT}"
+        )
+
+        if big_payout >= BIG_TARGET_PAYOUT:
+
+            print()
+            print("####################################")
+            print("        BIG BONUS 終了")
+            print("####################################")
+
+            print(
+                f"BIG払い出し合計 : "
+                f"{big_payout}枚"
+            )
+
+            state = GameState.NORMAL
+
+            big_payout = 0
+
+            replay_pending = False
+
+            print(
+                "通常ゲームへ戻ります。"
+            )
+
 
     # ======================================
     # リール制御結果
@@ -650,8 +939,8 @@ def play_game(credit, replay_pending):
         else:
 
             print(
-                "警告：入賞を"
-                "回避できませんでした。"
+                "警告："
+                "意図しない入賞があります。"
             )
 
     else:
@@ -660,34 +949,56 @@ def play_game(credit, replay_pending):
             role
         )
 
-        target_hit = False
+        target_hit = any(
+            symbol == target_symbol
+            for line_name, symbol, payout
+            in wins
+        )
 
-        for line_name, symbol, payout in wins:
+        other_hit = any(
+            symbol != target_symbol
+            for line_name, symbol, payout
+            in wins
+        )
 
-            if symbol == target_symbol:
-
-                target_hit = True
-
-        if target_hit:
+        if (
+            target_hit
+            and not other_hit
+        ):
 
             print(
                 f"引き込み成功："
                 f"{role.value}が成立しました。"
             )
 
-        else:
+        elif not target_hit:
 
             print(
                 f"{role.value}当選ですが、"
-                f"引き込めませんでした。"
+                f"4コマ以内に引き込めませんでした。"
             )
+
+            if role == Role.BIG:
+
+                print(
+                    "→ BIG当選は持ち越し"
+                )
+
+            else:
+
+                print(
+                    "→ 取りこぼし"
+                )
+
+        else:
 
             print(
-                "→ 取りこぼし"
+                "警告：別役が同時成立しています。"
             )
 
+
     # ======================================
-    # 最終クレジット
+    # 最終状態
     # ======================================
 
     print()
@@ -697,9 +1008,35 @@ def play_game(credit, replay_pending):
         f"CREDIT : {credit}"
     )
 
+    print(
+        f"MODE   : {state.value}"
+    )
+
+    if big_pending:
+
+        print(
+            "BONUS  : BIG成立中"
+        )
+
+    if state == GameState.BIG:
+
+        print(
+            f"BIG    : "
+            f"{big_payout}"
+            f" / {BIG_TARGET_PAYOUT}"
+        )
+
     print("====================================")
 
-    return credit, replay_pending
+
+    return (
+        credit,
+        replay_pending,
+        state,
+        big_payout,
+        big_pending
+    )
+
 
 
 # ==========================================
@@ -711,6 +1048,13 @@ def main():
     credit = INITIAL_CREDIT
 
     replay_pending = False
+
+    state = GameState.NORMAL
+
+    big_payout = 0
+
+    # BIG内部当選持ち越しフラグ
+    big_pending = False
 
     print("==============================")
     print("      Python SLOT")
@@ -729,6 +1073,28 @@ def main():
             f"CREDIT : {credit}"
         )
 
+        print(
+            f"MODE   : {state.value}"
+        )
+
+        # ==================================
+        # BIG成立中表示
+        # ==================================
+
+        if big_pending:
+
+            print(
+                "BONUS  : ★ BIG成立中 ★"
+            )
+
+        if state == GameState.BIG:
+
+            print(
+                f"BIG    : "
+                f"{big_payout}"
+                f" / {BIG_TARGET_PAYOUT}"
+            )
+
         if replay_pending:
 
             print(
@@ -737,12 +1103,26 @@ def main():
 
         print("------------------------------")
 
+
         # ==================================
-        # メダル不足
+        # 必要BET
+        # ==================================
+
+        if state == GameState.BIG:
+
+            required_bet = BIG_BET_AMOUNT
+
+        else:
+
+            required_bet = BET_AMOUNT
+
+
+        # ==================================
+        # CREDIT不足
         # ==================================
 
         if (
-            credit < BET_AMOUNT
+            credit < required_bet
             and not replay_pending
         ):
 
@@ -756,6 +1136,7 @@ def main():
             )
 
             break
+
 
         command = input(
             "\nEnterでSTART / qで終了："
@@ -773,9 +1154,19 @@ def main():
 
             break
 
-        credit, replay_pending = play_game(
+
+        (
             credit,
-            replay_pending
+            replay_pending,
+            state,
+            big_payout,
+            big_pending
+        ) = play_game(
+            credit,
+            replay_pending,
+            state,
+            big_payout,
+            big_pending
         )
 
 
