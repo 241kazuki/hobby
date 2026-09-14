@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Python SLOT</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+    <main class="machine">
+        <h1>PYTHON SLOT</h1>
+
+        <section class="status-panel">
+            <div>
+                <span class="label">CREDIT</span>
+                <span class="value" id="credit">{{ state.credit }}</span>
+            </div>
+            <div>
+                <span class="label">MODE</span>
+                <span class="value" id="mode">{{ state.mode }}</span>
+            </div>
+            <div class="wide bonus-state" id="bonus-state" {% if not state.big_pending %}hidden{% endif %}>
+                ★ BIG成立中 ★
+            </div>
+            <div class="wide replay-state" id="replay-state" {% if not state.replay_pending %}hidden{% endif %}>
+                REPLAY：次ゲームBET不要
+            </div>
+            <div class="wide" id="big-progress" {% if state.mode != "BIG BONUS" %}hidden{% endif %}>
+                BIG：<span id="big-payout">{{ state.big_payout }}</span> / {{ state.big_target }}
+            </div>
+        </section>
+
+        <section class="reels">
+            {% for reel_index in range(3) %}
+            <div class="reel" data-reel="{{ reel_index }}">
+                <div class="symbol" id="symbol-{{ reel_index }}-0">{{ initial_screen[reel_index][0] }}</div>
+                <div class="symbol center" id="symbol-{{ reel_index }}-1">{{ initial_screen[reel_index][1] }}</div>
+                <div class="symbol" id="symbol-{{ reel_index }}-2">{{ initial_screen[reel_index][2] }}</div>
+            </div>
+            {% endfor %}
+        </section>
+
+        <section class="stop-controls">
+            <button class="stop-button" data-reel="0" disabled>STOP 1</button>
+            <button class="stop-button" data-reel="1" disabled>STOP 2</button>
+            <button class="stop-button" data-reel="2" disabled>STOP 3</button>
+        </section>
+
+        <section class="message" id="message">STARTを押してください。</section>
+
+        <section class="debug-info" id="debug-info">
+            <div>内部抽選：<span id="debug-role">-</span></div>
+            <div>抽選乱数：<span id="debug-random">-</span></div>
+            <div>BET：<span id="debug-bet">-</span></div>
+            <div>滑り：<span id="debug-slides">- / - / -</span> コマ</div>
+        </section>
+
+        <section class="controls">
+            <button class="start-button" id="start-button" {% if not state.can_start %}disabled{% endif %}>
+                START
+            </button>
+            <button class="reset-button" id="reset-button">RESET</button>
+        </section>
+    </main>
+
+    <script>
+        // Pythonからリール配列そのものをJavaScriptへ渡す。
+        // JavaScriptは抽選をせず、回転表示とSTOP時刻の取得だけを担当する。
+        window.SLOT_DATA = {
+            reels: {{ reels | tojson }},
+            initialPositions: {{ initial_positions | tojson }},
+            initialState: {{ state | tojson }}
+        };
+    </script>
+    <script src="{{ url_for('static', filename='slot.js') }}"></script>
+</body>
+</html>
