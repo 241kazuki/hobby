@@ -20,7 +20,7 @@ active_context = None
 pressed_positions = [None, None, None]
 stopped_positions = [None, None, None]
 round_slides = [None, None, None]
-next_reel_index = 0
+stop_order = []
 
 
 def state_json():
@@ -76,12 +76,10 @@ def index():
 
 @app.post("/api/start")
 def start_game():
-    global active_context, pressed_positions, stopped_positions
-    global round_slides, next_reel_index
+    global active_context, pressed_positions, stopped_positions, round_slides, stop_order
 
     if active_context is not None:
         return jsonify({"ok": False, "message": "すでにリールが回転中です。"}), 409
-
     if not can_start_game(slot_state):
         return jsonify({"ok": False, "message": "CREDITが不足しています。"}), 400
 
@@ -89,26 +87,24 @@ def start_game():
     pressed_positions = [None, None, None]
     stopped_positions = [None, None, None]
     round_slides = [None, None, None]
-    next_reel_index = 0
+    stop_order = []
 
     if active_context.new_big_hit:
         message = "★ BONUS確定！ 7を狙ってください ★"
     elif active_context.role.value == "BIG" and slot_state.big_pending:
         message = "★ BIG成立中：7を狙ってください ★"
     else:
-        message = "リール回転中…STOP 1から順番に停止してください。"
+        message = "リール回転中…好きなSTOPボタンから停止できます。"
 
     return jsonify({
         "ok": True,
         "message": message,
         "state": state_json(),
-        "next_reel": next_reel_index,
+        "remaining_reels": [0, 1, 2],
+        "stop_order": [],
         "debug": {
             "role": active_context.role.value,
-            "random_value": (
-                "持ち越し" if active_context.random_value == -1
-                else active_context.random_value
-            ),
+            "random_value": "持ち越し" if active_context.random_value == -1 else active_context.random_value,
             "bet": active_context.bet,
         },
     })
@@ -117,7 +113,7 @@ def start_game():
 @app.post("/api/stop")
 def stop_reel():
     global active_context, pressed_positions, stopped_positions
-    global round_slides, next_reel_index, last_positions
+    global round_slides, stop_order, last_positions
 
     if active_context is None:
         return jsonify({"ok": False, "message": "STARTを押してください。"}), 409
@@ -133,10 +129,10 @@ def stop_reel():
     if reel_index not in (0, 1, 2):
         return jsonify({"ok": False, "message": "リール番号が不正です。"}), 400
 
-    if reel_index != next_reel_index:
+    if stopped_positions[reel_index] is not None:
         return jsonify({
             "ok": False,
-            "message": f"STOP {next_reel_index + 1} を先に押してください。"
+            "message": f"STOP {reel_index + 1} はすでに停止済みです。"
         }), 409
 
     if not 0 <= position < len(REELS[reel_index]):
@@ -153,21 +149,29 @@ def stop_reel():
     stopped_positions[reel_index] = stop_position
     round_slides[reel_index] = slide
 
-    # 左・中リールはその場で停止し、次のSTOPへ進む。
-    if reel_index < 2:
-        next_reel_index += 1
+    stop_order.append(reel_index)
+
+    remaining_reels = [
+        i for i, value in enumerate(stopped_positions)
+        if value is None
+    ]
+
+    if remaining_reels:
+        order_text = " → ".join(f"STOP {i + 1}" for i in stop_order)
+
         return jsonify({
             "ok": True,
             "complete": False,
             "message": (
                 f"STOP {reel_index + 1}：{slide}コマ滑り → "
-                f"位置 {stop_position} で停止"
+                f"位置 {stop_position} で停止 [{order_text}]"
             ),
             "reel_index": reel_index,
             "pressed_position": position,
             "stop_position": stop_position,
             "slide": slide,
-            "next_reel": next_reel_index,
+            "remaining_reels": remaining_reels,
+            "stop_order": list(stop_order),
             "partial_success": step_success,
         })
 
@@ -213,14 +217,14 @@ def stop_reel():
     pressed_positions = [None, None, None]
     stopped_positions = [None, None, None]
     round_slides = [None, None, None]
-    next_reel_index = 0
+    stop_order = []
     return jsonify(response)
 
 
 @app.post("/api/reset")
 def reset_game():
     global slot_state, last_positions, active_context
-    global pressed_positions, stopped_positions, round_slides, next_reel_index
+    global pressed_positions, stopped_positions, round_slides, stop_order
 
     slot_state = SlotState()
     last_positions = [0, 0, 0]
@@ -228,7 +232,7 @@ def reset_game():
     pressed_positions = [None, None, None]
     stopped_positions = [None, None, None]
     round_slides = [None, None, None]
-    next_reel_index = 0
+    stop_order = []
 
     return jsonify({
         "ok": True,

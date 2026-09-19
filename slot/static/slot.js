@@ -89,9 +89,13 @@ async function animateSingleSlide(reelIndex, slide, stopPosition) {
     renderReel(reelIndex);
 }
 
-function enableOnlyStop(reelIndex) {
+function disableAllStops() {
+    stopButtons.forEach(button => button.disabled = true);
+}
+
+function enableRemainingStops() {
     stopButtons.forEach((button, index) => {
-        button.disabled = index !== reelIndex;
+        button.disabled = stopped[index];
     });
 }
 
@@ -118,9 +122,8 @@ async function startGame() {
         updateDebug(data.debug);
         message.textContent = data.message;
 
-        // 3本とも回転するが、STOPは左から順番に押す。
         for (let i = 0; i < 3; i++) startAnimation(i);
-        enableOnlyStop(data.next_reel ?? 0);
+        enableRemainingStops();
     } catch (error) {
         console.error(error);
         message.textContent = "サーバーとの通信に失敗しました。";
@@ -135,7 +138,7 @@ async function stopReel(reelIndex) {
     // ボタンを押した瞬間の中央位置を記録し、表示上はいったん止める。
     const pressedPosition = positions[reelIndex];
     stopAnimation(reelIndex);
-    stopButtons[reelIndex].disabled = true;
+    disableAllStops();
 
     try {
         const response = await fetch("/api/stop", {
@@ -151,9 +154,8 @@ async function stopReel(reelIndex) {
 
         if (!response.ok || !data.ok) {
             message.textContent = data.message || "STOPに失敗しました。";
-            // 通信・順序エラーなら、そのリールの回転を再開する。
             startAnimation(reelIndex);
-            enableOnlyStop(reelIndex);
+            enableRemainingStops();
             return;
         }
 
@@ -165,7 +167,7 @@ async function stopReel(reelIndex) {
         message.textContent = data.message;
 
         if (!data.complete) {
-            enableOnlyStop(data.next_reel);
+            enableRemainingStops();
             return;
         }
 
@@ -180,7 +182,7 @@ async function stopReel(reelIndex) {
         console.error(error);
         message.textContent = "サーバーとの通信に失敗しました。";
         startAnimation(reelIndex);
-        enableOnlyStop(reelIndex);
+        enableRemainingStops();
     }
 }
 

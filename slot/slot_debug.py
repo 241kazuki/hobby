@@ -1,6 +1,5 @@
 from itertools import product
 from unittest.mock import patch
-
 import slot_engine as slot
 
 
@@ -13,6 +12,22 @@ def test_basic_settings():
     for i, reel in enumerate(slot.REELS, start=1):
         print(f"REEL {i} : {len(reel)}コマ")
         assert len(reel) == 21
+    print("OK")
+
+    print("\n[1-2] 図柄数チェック")
+    expected_counts = {
+        "ベル": 6,
+        "リプレイ": 6,
+        "スイカ": 3,
+        "チェリー": 2,
+        "7": 2,
+        "BAR": 2,
+    }
+
+    for i, reel in enumerate(slot.REELS, start=1):
+        actual = {symbol: reel.count(symbol) for symbol in expected_counts}
+        print(f"REEL {i} : {actual}")
+        assert actual == expected_counts
     print("OK")
 
     print("\n[2] 通常抽選テーブル")
@@ -32,16 +47,26 @@ def test_reel_control():
     print("\n[4] リール制御全探索")
     print("21 × 21 × 21 = 9261通り")
 
-    roles = [slot.Role.BIG, slot.Role.BELL, slot.Role.CHERRY, slot.Role.REPLAY, slot.Role.MISS]
+    roles = [
+        slot.Role.BIG,
+        slot.Role.BELL,
+        slot.Role.CHERRY,
+        slot.Role.WATERMELON,
+        slot.Role.REPLAY,
+        slot.Role.MISS,
+    ]
 
     for role in roles:
         total = success = simultaneous = unsafe = 0
 
         for positions in product(range(21), repeat=3):
             total += 1
-            stopped_positions, slides, control_success = slot.choose_stop_positions(list(positions), role)
+            stopped_positions, slides, control_success = slot.choose_stop_positions(
+                list(positions), role
+            )
 
             assert all(0 <= slide <= 4 for slide in slides)
+
             for i, stop_position in enumerate(stopped_positions):
                 assert 0 <= stop_position < len(slot.REELS[i])
 
@@ -82,10 +107,15 @@ def test_reel_control():
 
 def find_big_positions(want_success):
     for positions in product(range(21), repeat=3):
-        _, _, control_success = slot.choose_stop_positions(list(positions), slot.Role.BIG)
+        _, _, control_success = slot.choose_stop_positions(
+            list(positions), slot.Role.BIG
+        )
         if control_success == want_success:
             return list(positions)
-    raise AssertionError(f"BIG control case not found: success={want_success}")
+
+    raise AssertionError(
+        f"BIG control case not found: success={want_success}"
+    )
 
 
 def test_big_carryover():
@@ -106,7 +136,7 @@ def test_big_carryover():
     assert first_result.big_carried is True
     assert first_result.big_started is False
 
-    print(f"取りこぼしテスト位置                   : {miss_positions}")
+    print(f"取りこぼしテスト位置 : {miss_positions}")
     print("BIG内部当選 → 取りこぼし → 持ち越し : OK")
 
     second_round = slot.begin_game(state)
@@ -118,14 +148,137 @@ def test_big_carryover():
     assert state.big_pending is False
     assert second_result.big_started is True
 
-    print(f"7揃いテスト位置                       : {hit_positions}")
-    print("持ち越しBIG → 7揃い → BIG BONUS      : OK")
+    print(f"7揃いテスト位置 : {hit_positions}")
+    print("持ち越しBIG → 7揃い → BIG BONUS : OK")
+
+
+def simulate_sequential(role, positions, order):
+    stopped_positions = [None, None, None]
+    slides = [None, None, None]
+    final_success = False
+
+    for reel_index in order:
+        stop_position, slide, step_success = slot.choose_sequential_stop(
+            role,
+            reel_index,
+            positions[reel_index],
+            stopped_positions
+        )
+
+        stopped_positions[reel_index] = stop_position
+        slides[reel_index] = slide
+        final_success = step_success
+
+    return stopped_positions, slides, final_success
+
+
+def test_all_stop_orders():
+    print("\n[6] 自由STOP順 6パターン全探索")
+
+    orders = [
+        (0, 1, 2),
+        (0, 2, 1),
+        (1, 0, 2),
+        (1, 2, 0),
+        (2, 0, 1),
+        (2, 1, 0),
+    ]
+
+    roles = [
+        slot.Role.BIG,
+        slot.Role.BELL,
+        slot.Role.CHERRY,
+        slot.Role.WATERMELON,
+        slot.Role.REPLAY,
+        slot.Role.MISS,
+    ]
+
+    for order in orders:
+        order_name = "→".join(str(i + 1) for i in order)
+        print(f"\n--- STOP順 {order_name} ---")
+
+        for role in roles:
+            total = success = simultaneous = unsafe = 0
+
+            for positions in product(range(21), repeat=3):
+                total += 1
+                stopped_positions, slides, control_success = simulate_sequential(
+                    role, list(positions), order
+                )
+
+                assert all(0 <= slide <= 4 for slide in slides)
+                assert all(position is not None for position in stopped_positions)
+
+                screen = slot.create_screen(stopped_positions)
+                wins, _ = slot.check_paylines(screen)
+
+                if role == slot.Role.MISS:
+                    if wins:
+                        unsafe += 1
+                    else:
+                        success += 1
+                    continue
+
+                target_symbol = slot.role_to_symbol(role)
+                target_wins = [win for win in wins if win[1] == target_symbol]
+                other_wins = [win for win in wins if win[1] != target_symbol]
+
+                if control_success:
+                    assert target_wins
+                    assert not other_wins
+                    success += 1
+                else:
+                    assert not wins
+
+                if target_wins and other_wins:
+                    simultaneous += 1
+
+            rate = success / total * 100
+
+            print(
+                f"{role.value:8} : "
+                f"{success:4} / {total} "
+                f"({rate:6.2f}%)",
+                end=""
+            )
+
+            if role in (slot.Role.BELL, slot.Role.REPLAY):
+                assert success == total
+
+            if role == slot.Role.MISS:
+                print(f"  意図しない入賞={unsafe}")
+                assert unsafe == 0
+            else:
+                print(f"  別役同時成立={simultaneous}")
+                assert simultaneous == 0
+
+
+def test_watermelon_payout():
+    print("\n[7] スイカ払い出しテスト")
+
+    assert slot.PAYOUT_TABLE["スイカ"] == 8
+    assert slot.role_to_symbol(slot.Role.WATERMELON) == "スイカ"
+
+    screen = [
+        ["BAR", "スイカ", "ベル"],
+        ["7", "スイカ", "リプレイ"],
+        ["チェリー", "スイカ", "BAR"],
+    ]
+
+    wins, payout = slot.check_paylines(screen)
+
+    assert ("中段", "スイカ", 8) in wins
+    assert payout == 8
+
+    print("スイカ揃い → 8枚払い出し : OK")
 
 
 def main():
     test_basic_settings()
     test_reel_control()
     test_big_carryover()
+    test_all_stop_orders()
+    test_watermelon_payout()
 
     print("\n====================================")
     print("         ALL TESTS PASSED")

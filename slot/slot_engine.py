@@ -2,6 +2,7 @@ import random
 from dataclasses import dataclass
 from enum import Enum
 from itertools import product
+from functools import lru_cache
 
 # ==========================================
 # 基本設定
@@ -17,27 +18,27 @@ BIG_TARGET_PAYOUT = 100
 # ==========================================
 
 REEL_1 = [
-    "7", "リプレイ", "ベル", "チェリー", "ベル",
-    "BAR", "リプレイ", "ベル", "チェリー", "リプレイ",
-    "ベル", "7", "ベル", "チェリー", "ベル",
-    "BAR", "リプレイ", "リプレイ", "チェリー", "リプレイ",
-    "ベル"
-]
-
-REEL_2 = [
-    "ベル", "BAR", "チェリー", "7", "リプレイ",
-    "ベル", "リプレイ", "ベル", "リプレイ", "チェリー",
-    "7", "リプレイ", "ベル", "ベル", "リプレイ",
-    "BAR", "チェリー", "ベル", "リプレイ", "ベル",
+    "7", "スイカ", "ベル", "リプレイ", "チェリー",
+    "ベル", "ベル", "リプレイ", "BAR", "ベル",
+    "リプレイ", "BAR", "スイカ", "7", "ベル",
+    "リプレイ", "スイカ", "チェリー", "ベル", "リプレイ",
     "リプレイ"
 ]
 
+REEL_2 = [
+    "リプレイ", "チェリー", "ベル", "7", "リプレイ",
+    "リプレイ", "ベル", "スイカ", "リプレイ", "ベル",
+    "ベル", "BAR", "リプレイ", "7", "ベル",
+    "スイカ", "リプレイ", "チェリー", "ベル", "スイカ",
+    "BAR"
+]
+
 REEL_3 = [
-    "リプレイ", "ベル", "リプレイ", "7", "ベル",
-    "チェリー", "BAR", "リプレイ", "ベル", "ベル",
-    "チェリー", "リプレイ", "7", "ベル", "リプレイ",
-    "チェリー", "リプレイ", "ベル", "BAR", "ベル",
-    "チェリー"
+    "チェリー", "ベル", "スイカ", "リプレイ", "チェリー",
+    "ベル", "ベル", "リプレイ", "ベル", "BAR",
+    "7", "スイカ", "リプレイ", "ベル", "BAR",
+    "リプレイ", "スイカ", "リプレイ", "ベル", "7",
+    "リプレイ"
 ]
 
 REELS = [REEL_1, REEL_2, REEL_3]
@@ -50,6 +51,7 @@ class Role(Enum):
     BIG = "BIG"
     BELL = "ベル"
     CHERRY = "チェリー"
+    WATERMELON = "スイカ"
     REPLAY = "リプレイ"
     MISS = "ハズレ"
 
@@ -63,8 +65,9 @@ LOTTERY_TABLE = [
     (100, Role.BIG),
     (1500, Role.BELL),
     (1000, Role.CHERRY),
+    (500, Role.WATERMELON),
     (2000, Role.REPLAY),
-    (5400, Role.MISS)
+    (4900, Role.MISS)
 ]
 
 BIG_LOTTERY_TABLE = [
@@ -78,6 +81,7 @@ PAYOUT_TABLE = {
     "7": 0,
     "ベル": 10,
     "チェリー": 5,
+    "スイカ": 8,
     "リプレイ": 0
 }
 
@@ -149,6 +153,8 @@ def role_to_symbol(role):
         return "ベル"
     if role == Role.CHERRY:
         return "チェリー"
+    if role == Role.WATERMELON:
+        return "スイカ"
     if role == Role.REPLAY:
         return "リプレイ"
     return None
@@ -173,9 +179,20 @@ def check_paylines(screen):
     total_payout = 0
     wins = []
 
+    # チェリーは左リール中段だけで成立
+    if screen[0][1] == "チェリー":
+        payout = PAYOUT_TABLE["チェリー"]
+        total_payout += payout
+        wins.append(("左中段", "チェリー", payout))
+
     for line_name, positions in PAY_LINES.items():
         symbols = [screen[reel_number][row] for reel_number, row in positions]
-        if symbols[0] == symbols[1] == symbols[2] and symbols[0] in PAYOUT_TABLE:
+
+        if (
+            symbols[0] == symbols[1] == symbols[2]
+            and symbols[0] in PAYOUT_TABLE
+            and symbols[0] != "チェリー"
+        ):
             symbol = symbols[0]
             payout = PAYOUT_TABLE[symbol]
             total_payout += payout
@@ -237,106 +254,369 @@ def _visible_symbol(reel_index, stop_position, row):
 
 
 def _compatible_target_lines(partial_positions, target_symbol):
-    """停止済みリールがtarget_symbolでつながっている有効ライン数を返す。"""
     count = 0
+
     for positions in PAY_LINES.values():
         compatible = True
+
         for reel_index, row in positions:
             stop_position = partial_positions[reel_index]
+
             if stop_position is None:
                 continue
+
             if _visible_symbol(reel_index, stop_position, row) != target_symbol:
                 compatible = False
                 break
+
         if compatible:
             count += 1
+
     return count
 
+def _compatible_role(partial_positions, role):
+    if role == Role.CHERRY:
+        if partial_positions[0] is None:
+            return 1
+
+        return (
+            1
+            if _visible_symbol(0, partial_positions[0], 1) == "チェリー"
+            else 0
+        )
+
+    return _compatible_target_lines(
+        partial_positions,
+        role_to_symbol(role)
+    )
 
 def _partial_pair_risk(partial_positions, target_symbol=None):
-    """停止済み2リール以上で同一役が並んでいるライン数を数える。"""
     risk = 0
+
     for positions in PAY_LINES.values():
         symbols = []
+
         for reel_index, row in positions:
             stop_position = partial_positions[reel_index]
+
             if stop_position is None:
                 continue
-            symbols.append(_visible_symbol(reel_index, stop_position, row))
+
+            symbols.append(
+                _visible_symbol(reel_index, stop_position, row)
+            )
 
         if len(symbols) >= 2 and len(set(symbols)) == 1:
             symbol = symbols[0]
-            if symbol in PAYOUT_TABLE and symbol != target_symbol:
+
+            if (
+                symbol in PAYOUT_TABLE
+                and symbol != "チェリー"
+                and symbol != target_symbol
+            ):
                 risk += 1
+
     return risk
 
 
-def choose_sequential_stop(role, reel_index, pressed_position, stopped_positions):
-    """
-    1本分のSTOP位置を0～4コマで決める。
+@lru_cache(maxsize=None)
+def _future_final_coverage(role, partial_positions, remaining_reel):
+    target_symbol = role_to_symbol(role)
+    safe_coverage = 0
+    target_coverage = 0
 
-    左・中リールでは将来の有効ラインをできるだけ残し、
-    右リールでは最終的な入賞／蹴りを確定する。
-    """
+    for pressed_position in range(len(REELS[remaining_reel])):
+        has_safe = False
+        has_target = False
+
+        for slide in range(5):
+            stop_position = (
+                pressed_position + slide
+            ) % len(REELS[remaining_reel])
+
+            full_positions = list(partial_positions)
+            full_positions[remaining_reel] = stop_position
+
+            screen = create_screen(full_positions)
+            wins, _ = check_paylines(screen)
+
+            if role == Role.MISS:
+                if not wins:
+                    has_safe = True
+                    break
+                continue
+
+            target_wins = [
+                win for win in wins
+                if win[1] == target_symbol
+            ]
+
+            other_wins = [
+                win for win in wins
+                if win[1] != target_symbol
+            ]
+
+            if target_wins and not other_wins:
+                has_target = True
+                has_safe = True
+                break
+
+            if not wins:
+                has_safe = True
+
+        if has_safe:
+            safe_coverage += 1
+
+        if has_target:
+            target_coverage += 1
+
+    return safe_coverage, target_coverage
+
+def _choose_cherry_stop(reel_index, pressed_position, stopped_positions):
+    # チェリーは左リールのみ
+    if reel_index != 0:
+        return _choose_sequential_stop_cached(
+            Role.CHERRY,
+            reel_index,
+            pressed_position,
+            tuple(stopped_positions)
+        )
+
+    for slide in range(5):
+        stop_position = (pressed_position + slide) % len(REELS[0])
+
+        if REELS[0][stop_position] == "チェリー":
+            return stop_position, slide, True
+
+    return pressed_position, 0, False
+
+def _choose_guaranteed_center_stop(role, reel_index, pressed_position):
+    target_symbol = role_to_symbol(role)
+
+    for slide in range(5):
+        stop_position = (
+            pressed_position + slide
+        ) % len(REELS[reel_index])
+
+        if REELS[reel_index][stop_position] == target_symbol:
+            return stop_position, slide, True
+
+    return pressed_position, 0, False
+
+def _choose_big_stop(reel_index, pressed_position, stopped_positions):
+    stopped_reels = [
+        i for i, position in enumerate(stopped_positions)
+        if position is not None
+    ]
+
+    # それまでのリールが中段7なら、中段7揃いを維持する
+    center_seven = all(
+        REELS[i][stopped_positions[i]] == "7"
+        for i in stopped_reels
+    )
+
+    if center_seven:
+        for slide in range(5):
+            stop_position = (
+                pressed_position + slide
+            ) % len(REELS[reel_index])
+
+            if REELS[reel_index][stop_position] != "7":
+                continue
+
+            partial = list(stopped_positions)
+            partial[reel_index] = stop_position
+
+            if None not in partial:
+                wins, _ = check_paylines(create_screen(partial))
+                target = [win for win in wins if win[1] == "7"]
+                others = [win for win in wins if win[1] != "7"]
+
+                if target and not others:
+                    return stop_position, slide, True
+                break
+
+            return stop_position, slide, True
+
+    return _choose_sequential_stop_cached(
+        Role.BIG,
+        reel_index,
+        pressed_position,
+        tuple(stopped_positions)
+    )
+
+def choose_sequential_stop(role, reel_index, pressed_position, stopped_positions):
+    if role in (Role.BELL, Role.REPLAY):
+        return _choose_guaranteed_center_stop(
+            role, reel_index, pressed_position
+        )
+
+    if role == Role.BIG:
+        return _choose_big_stop(
+            reel_index, pressed_position, stopped_positions
+        )
+    if role == Role.CHERRY:
+        return _choose_cherry_stop(
+            reel_index, pressed_position, stopped_positions
+        )
+    return _choose_sequential_stop_cached(
+        role, reel_index, pressed_position, tuple(stopped_positions)
+    )
+    
+
+
+@lru_cache(maxsize=None)
+def _choose_sequential_stop_cached(
+    role,
+    reel_index,
+    pressed_position,
+    stopped_positions
+):
     if reel_index not in (0, 1, 2):
         raise ValueError("リール番号が不正です。")
 
     if len(stopped_positions) != 3:
         raise ValueError("stopped_positionsは3要素必要です。")
 
+    if stopped_positions[reel_index] is not None:
+        raise ValueError("このリールはすでに停止しています。")
+
     target_symbol = role_to_symbol(role)
     candidates = []
 
     for slide in range(5):
-        stop_position = (pressed_position + slide) % len(REELS[reel_index])
+        stop_position = (
+            pressed_position + slide
+        ) % len(REELS[reel_index])
+        # チェリー以外では左中段チェリーを誤って停止させない
+        if (
+            reel_index == 0
+            and role != Role.CHERRY
+            and REELS[0][stop_position] == "チェリー"
+        ):
+            continue
         partial = list(stopped_positions)
         partial[reel_index] = stop_position
 
-        # 右リールでは3本すべて停止するため、最終結果を直接判定する。
-        if reel_index == 2:
+        remaining = [
+            i for i, position in enumerate(partial)
+            if position is None
+        ]
+
+        # 最後のリール
+        if not remaining:
             screen = create_screen(partial)
             wins, _ = check_paylines(screen)
 
             if role == Role.MISS:
                 if not wins:
-                    candidates.append((0, slide, stop_position, True))
+                    candidates.append(
+                        ((0,), slide, stop_position, True)
+                    )
                 continue
 
-            target_wins = [win for win in wins if win[1] == target_symbol]
-            other_wins = [win for win in wins if win[1] != target_symbol]
+            target_wins = [
+                win for win in wins
+                if win[1] == target_symbol
+            ]
+
+            other_wins = [
+                win for win in wins
+                if win[1] != target_symbol
+            ]
 
             if target_wins and not other_wins:
-                candidates.append((0, slide, stop_position, True))
+                candidates.append(
+                    ((0,), slide, stop_position, True)
+                )
+
             elif not wins:
-                # 当選役を引き込めない場合の安全なハズレ目。
-                candidates.append((1, slide, stop_position, False))
+                candidates.append(
+                    ((1,), slide, stop_position, False)
+                )
+
             continue
 
-        # 左・中リールでは、最終ラインを作りやすい停止位置を優先する。
+        compatible = (
+            0
+            if role == Role.MISS
+            else _compatible_role(partial, role)
+        )
+
+        risk = _partial_pair_risk(
+            partial,
+            None if role == Role.MISS else target_symbol
+        )
+
+        # 2本目停止
+        if len(remaining) == 1:
+            safe_coverage, target_coverage = (
+                _future_final_coverage(
+                    role,
+                    tuple(partial),
+                    remaining[0]
+                )
+            )
+
+            if role == Role.MISS:
+                score = (
+                    -safe_coverage,
+                    risk
+                )
+                success = safe_coverage > 0
+
+            else:
+                score = (
+                    -safe_coverage,
+                    -target_coverage,
+                    -compatible,
+                    risk
+                )
+                success = target_coverage > 0
+
+            candidates.append(
+                (
+                    score,
+                    slide,
+                    stop_position,
+                    success
+                )
+            )
+
+            continue
+
+        # 1本目停止
         if role == Role.MISS:
-            risk = _partial_pair_risk(partial)
-            candidates.append((risk, slide, stop_position, True))
+            score = (risk,)
+            success = True
+
         else:
-            compatible = _compatible_target_lines(partial, target_symbol)
-            risk = _partial_pair_risk(partial, target_symbol)
-            # compatibleが多いほど優先。次に別役のテンパイを避け、滑りを短くする。
-            candidates.append((-compatible, risk, slide, stop_position, compatible > 0))
+            score = (
+                -compatible,
+                risk
+            )
+            success = compatible > 0
+
+        candidates.append(
+            (
+                score,
+                slide,
+                stop_position,
+                success
+            )
+        )
 
     if not candidates:
         return pressed_position, 0, False
 
-    if reel_index == 2:
-        best = min(candidates, key=lambda x: (x[0], x[1]))
-        _, slide, stop_position, success = best
-        return stop_position, slide, success
-
-    if role == Role.MISS:
-        best = min(candidates, key=lambda x: (x[0], x[1]))
-        _, slide, stop_position, success = best
-        return stop_position, slide, success
-
-    best = min(candidates, key=lambda x: (x[0], x[1], x[2]))
-    _, _, slide, stop_position, success = best
+    best = min(
+        candidates,
+        key=lambda x: (
+            x[0],
+            x[1]
+        )
+    )
+    _, slide, stop_position, success = best
     return stop_position, slide, success
 
 # ==========================================
