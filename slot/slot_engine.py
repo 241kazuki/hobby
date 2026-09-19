@@ -373,15 +373,13 @@ def _future_final_coverage(role, partial_positions, remaining_reel):
     return safe_coverage, target_coverage
 
 def _choose_cherry_stop(reel_index, pressed_position, stopped_positions):
-    # チェリーは左リールのみ
-    if reel_index != 0:
+    # 左リール以外、または左を後から止める場合は通常の安全制御を使う
+    if reel_index != 0 or any(position is not None for position in stopped_positions):
         return _choose_sequential_stop_cached(
-            Role.CHERRY,
-            reel_index,
-            pressed_position,
-            tuple(stopped_positions)
+            Role.CHERRY, reel_index, pressed_position, tuple(stopped_positions)
         )
 
+    # 左リールを最初に止める場合は7狙いからチェリーを引き込む
     for slide in range(5):
         stop_position = (pressed_position + slide) % len(REELS[0])
 
