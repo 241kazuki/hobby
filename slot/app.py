@@ -2,7 +2,9 @@ from flask import Flask, jsonify, render_template, request
 
 from slot_engine import (
     BIG_TARGET_PAYOUT,
+    REG_TARGET_PAYOUT,
     REELS,
+    Role,
     SlotState,
     begin_game,
     can_start_game,
@@ -27,9 +29,18 @@ def state_json():
     return {
         "credit": slot_state.credit,
         "mode": slot_state.state.value,
+
         "big_pending": slot_state.big_pending,
         "big_payout": slot_state.big_payout,
         "big_target": BIG_TARGET_PAYOUT,
+
+        "reg_pending": slot_state.reg_pending,
+        "reg_payout": slot_state.reg_payout,
+        "reg_target": REG_TARGET_PAYOUT,
+
+        "bonus_pending": slot_state.big_pending or slot_state.reg_pending,
+        "bonus_lamp_on": slot_state.bonus_lamp_on,
+
         "replay_pending": slot_state.replay_pending,
         "can_start": can_start_game(slot_state),
     }
@@ -37,29 +48,54 @@ def state_json():
 
 def win_messages(result):
     messages = []
+
     for line_name, symbol, payout in result.wins:
         if symbol == "7":
             messages.append(f"{line_name}ライン：7揃い → BIG BONUS")
+
+        elif symbol == "BAR":
+            messages.append(f"{line_name}ライン：BAR揃い → REG BONUS")
+
         elif symbol == "リプレイ":
             messages.append(f"{line_name}ライン：リプレイ揃い → 再遊技")
+
+        elif symbol == "チェリー":
+            messages.append(f"左リール中段：チェリー → {payout}枚")
+
         else:
             messages.append(f"{line_name}ライン：{symbol}揃い → {payout}枚")
+
     return messages
 
 
 def build_notice(context, result):
     if result.big_started:
         return "★ BIG BONUS START ★"
-    if result.big_carried:
-        return "★ BIG成立中：次ゲームへ持ち越し ★"
+
+    if result.reg_started:
+        return "★ REG BONUS START ★"
+
+    if (
+        context.bonus_notice_timing == "POST"
+        and (result.big_carried or result.reg_carried)
+    ):
+        return "★ CHANCE! ★"
+
+    if result.big_carried or result.reg_carried:
+        return "★ BONUS成立中 ★"
+
     if result.big_ended:
         return "BIG BONUS終了。通常ゲームへ戻りました。"
+
+    if result.reg_ended:
+        return "REG BONUS終了。通常ゲームへ戻りました。"
+
     if result.replay_hit:
         return "★ REPLAY：次ゲームはBET不要 ★"
-    if context.new_big_hit:
-        return "★ BONUS確定：BIG内部当選 ★"
+
     if result.wins:
         return " / ".join(win_messages(result))
+
     return "ハズレ"
 
 
@@ -89,10 +125,15 @@ def start_game():
     round_slides = [None, None, None]
     stop_order = []
 
-    if active_context.new_big_hit:
-        message = "★ BONUS確定！ 7を狙ってください ★"
-    elif active_context.role.value == "BIG" and slot_state.big_pending:
-        message = "★ BIG成立中：7を狙ってください ★"
+    if (
+        (active_context.new_big_hit or active_context.new_reg_hit)
+        and active_context.bonus_notice_timing == "PRE"
+    ):
+        message = "★ CHANCE! ★"
+
+    elif slot_state.bonus_lamp_on:
+        message = "★ BONUS成立中 ★"
+
     else:
         message = "リール回転中…好きなSTOPボタンから停止できます。"
 
@@ -103,7 +144,7 @@ def start_game():
         "remaining_reels": [0, 1, 2],
         "stop_order": [],
         "debug": {
-            "role": active_context.role.value,
+            "role": debug_role_name(active_context.role),
             "random_value": "持ち越し" if active_context.random_value == -1 else active_context.random_value,
             "bet": active_context.bet,
         },
@@ -143,6 +184,7 @@ def stop_reel():
         reel_index,
         position,
         stopped_positions,
+        active_context.target_line,
     )
 
     pressed_positions[reel_index] = position
@@ -207,7 +249,7 @@ def stop_reel():
         "total_payout": result.total_payout,
         "control_success": result.control_success,
         "debug": {
-            "role": context.role.value,
+            "role": debug_role_name(context.role),
             "random_value": "持ち越し" if context.random_value == -1 else context.random_value,
             "bet": context.bet,
         },
@@ -242,6 +284,10 @@ def reset_game():
         "screen": create_screen(last_positions),
     })
 
+def debug_role_name(role):
+    if role in (Role.BIG, Role.REG):
+        return "BONUS"
+    return role.value
 
 if __name__ == "__main__":
     app.run(debug=True)

@@ -11,7 +11,10 @@ from functools import lru_cache
 INITIAL_CREDIT = 50
 BET_AMOUNT = 3
 BIG_BET_AMOUNT = 1
+REG_BET_AMOUNT = 1
+
 BIG_TARGET_PAYOUT = 100
+REG_TARGET_PAYOUT = 50
 
 # ==========================================
 # リール配列
@@ -34,7 +37,7 @@ REEL_2 = [
 ]
 
 REEL_3 = [
-    "チェリー", "ベル", "スイカ", "リプレイ", "チェリー",
+    "スイカ", "ベル", "チェリー", "リプレイ", "チェリー",
     "ベル", "ベル", "リプレイ", "ベル", "BAR",
     "7", "スイカ", "リプレイ", "ベル", "BAR",
     "リプレイ", "スイカ", "リプレイ", "ベル", "7",
@@ -49,6 +52,7 @@ REELS = [REEL_1, REEL_2, REEL_3]
 
 class Role(Enum):
     BIG = "BIG"
+    REG = "REG"
     BELL = "ベル"
     CHERRY = "チェリー"
     WATERMELON = "スイカ"
@@ -59,15 +63,17 @@ class Role(Enum):
 class GameState(Enum):
     NORMAL = "通常"
     BIG = "BIG BONUS"
+    REG = "REG BONUS"
 
 
 LOTTERY_TABLE = [
     (100, Role.BIG),
+    (100, Role.REG),
     (1500, Role.BELL),
     (1000, Role.CHERRY),
     (500, Role.WATERMELON),
     (2000, Role.REPLAY),
-    (4900, Role.MISS)
+    (4800, Role.MISS)
 ]
 
 BIG_LOTTERY_TABLE = [
@@ -77,12 +83,20 @@ BIG_LOTTERY_TABLE = [
     (500, Role.MISS)
 ]
 
+REG_LOTTERY_TABLE = [
+    (6000, Role.BELL),
+    (1500, Role.CHERRY),
+    (2000, Role.REPLAY),
+    (500, Role.MISS)
+]
+
 PAYOUT_TABLE = {
     "7": 0,
     "ベル": 10,
     "チェリー": 5,
     "スイカ": 8,
-    "リプレイ": 0
+    "リプレイ": 0,
+    "BAR": 0
 }
 
 PAY_LINES = {
@@ -103,7 +117,10 @@ class SlotState:
     replay_pending: bool = False
     state: GameState = GameState.NORMAL
     big_payout: int = 0
+    reg_payout: int = 0
     big_pending: bool = False
+    reg_pending: bool = False
+    bonus_lamp_on: bool = False
 
 
 @dataclass
@@ -113,7 +130,10 @@ class RoundContext:
     random_value: int
     role: Role
     new_big_hit: bool
+    new_reg_hit: bool
     replay_game: bool
+    target_line: str | None
+    bonus_notice_timing: str | None
 
 
 @dataclass
@@ -125,30 +145,46 @@ class RoundResult:
     screen: list
     wins: list
     total_payout: int
+
     replay_hit: bool
+
     big_hit: bool
     big_started: bool
     big_carried: bool
     big_ended: bool
 
+    reg_hit: bool
+    reg_started: bool
+    reg_carried: bool
+    reg_ended: bool
+
 # ==========================================
 # 抽選・表示用データ生成
 # ==========================================
-
 def lottery(state):
-    table = BIG_LOTTERY_TABLE if state == GameState.BIG else LOTTERY_TABLE
+    if state == GameState.BIG:
+        table = BIG_LOTTERY_TABLE
+    elif state == GameState.REG:
+        table = REG_LOTTERY_TABLE
+    else:
+        table = LOTTERY_TABLE
+
     random_value = random.randrange(10000)
     border = 0
+
     for probability, role in table:
         border += probability
         if random_value < border:
             return random_value, role
+
     return random_value, Role.MISS
 
 
 def role_to_symbol(role):
     if role == Role.BIG:
         return "7"
+    if role == Role.REG:
+        return "BAR"
     if role == Role.BELL:
         return "ベル"
     if role == Role.CHERRY:
@@ -373,31 +409,58 @@ def _future_final_coverage(role, partial_positions, remaining_reel):
     return safe_coverage, target_coverage
 
 def _choose_cherry_stop(reel_index, pressed_position, stopped_positions):
-    # 左リール以外、または左を後から止める場合は通常の安全制御を使う
+    # 左を最初に止める場合は赤7狙いからチェリーを引き込む
     if reel_index != 0 or any(position is not None for position in stopped_positions):
         return _choose_sequential_stop_cached(
             Role.CHERRY, reel_index, pressed_position, tuple(stopped_positions)
         )
 
-    # 左リールを最初に止める場合は7狙いからチェリーを引き込む
     for slide in range(5):
         stop_position = (pressed_position + slide) % len(REELS[0])
-
         if REELS[0][stop_position] == "チェリー":
             return stop_position, slide, True
 
     return pressed_position, 0, False
 
-def _choose_guaranteed_center_stop(role, reel_index, pressed_position):
+def _choose_watermelon_stop(reel_index, pressed_position, stopped_positions, target_line):
+    if target_line is None or REELS[reel_index][pressed_position] != "7":
+        return _choose_sequential_stop_cached(
+            Role.WATERMELON, reel_index, pressed_position, tuple(stopped_positions)
+        )
+
+    for i, position in enumerate(stopped_positions):
+        if position is None:
+            continue
+
+        row = _line_row(target_line, i)
+
+        if _visible_symbol(i, position, row) != "スイカ":
+            return _choose_sequential_stop_cached(
+                Role.WATERMELON, reel_index, pressed_position, tuple(stopped_positions)
+            )
+
+    return _choose_guaranteed_line_stop(
+        Role.WATERMELON, reel_index, pressed_position, target_line
+    )
+
+def _line_row(line_name, reel_index):
+    return dict(PAY_LINES[line_name])[reel_index]
+
+
+def _choose_guaranteed_line_stop(role, reel_index, pressed_position, line_name):
     target_symbol = role_to_symbol(role)
+    target_row = _line_row(line_name, reel_index)
 
     for slide in range(5):
-        stop_position = (
-            pressed_position + slide
-        ) % len(REELS[reel_index])
+        stop_position = (pressed_position + slide) % len(REELS[reel_index])
 
-        if REELS[reel_index][stop_position] == target_symbol:
-            return stop_position, slide, True
+        if _visible_symbol(reel_index, stop_position, target_row) != target_symbol:
+            continue
+
+        if reel_index == 0 and REELS[0][stop_position] == "チェリー":
+            continue
+
+        return stop_position, slide, True
 
     return pressed_position, 0, False
 
@@ -443,20 +506,46 @@ def _choose_big_stop(reel_index, pressed_position, stopped_positions):
         tuple(stopped_positions)
     )
 
-def choose_sequential_stop(role, reel_index, pressed_position, stopped_positions):
+def _choose_reg_stop(reel_index, pressed_position, stopped_positions):
+    return _choose_sequential_stop_cached(
+        Role.REG,
+        reel_index,
+        pressed_position,
+        tuple(stopped_positions)
+    )    
+
+def choose_sequential_stop(
+    role, reel_index, pressed_position, stopped_positions, target_line=None
+):
     if role in (Role.BELL, Role.REPLAY):
-        return _choose_guaranteed_center_stop(
-            role, reel_index, pressed_position
+        line_name = target_line or (
+            "右下がり" if role == Role.BELL else "右上がり"
+        )
+
+        return _choose_guaranteed_line_stop(
+            role, reel_index, pressed_position, line_name
+        )
+
+    if role == Role.CHERRY:
+        return _choose_cherry_stop(
+            reel_index, pressed_position, stopped_positions
+        )
+
+    if role == Role.WATERMELON:
+        return _choose_watermelon_stop(
+            reel_index, pressed_position, stopped_positions, target_line
         )
 
     if role == Role.BIG:
         return _choose_big_stop(
             reel_index, pressed_position, stopped_positions
         )
-    if role == Role.CHERRY:
-        return _choose_cherry_stop(
+
+    if role == Role.REG:
+        return _choose_reg_stop(
             reel_index, pressed_position, stopped_positions
         )
+
     return _choose_sequential_stop_cached(
         role, reel_index, pressed_position, tuple(stopped_positions)
     )
@@ -622,8 +711,13 @@ def _choose_sequential_stop_cached(
 # ==========================================
 
 def required_bet(slot_state):
-    return BIG_BET_AMOUNT if slot_state.state == GameState.BIG else BET_AMOUNT
+    if slot_state.state == GameState.BIG:
+        return BIG_BET_AMOUNT
 
+    if slot_state.state == GameState.REG:
+        return REG_BET_AMOUNT
+
+    return BET_AMOUNT
 
 def can_start_game(slot_state):
     return slot_state.replay_pending or slot_state.credit >= required_bet(slot_state)
@@ -644,15 +738,40 @@ def begin_game(slot_state):
         slot_state.credit -= bet
 
     new_big_hit = False
+    new_reg_hit = False
+    bonus_notice_timing = None
 
     if slot_state.state == GameState.NORMAL and slot_state.big_pending:
-        random_value = -1
-        role = Role.BIG
+        random_value, role = -1, Role.BIG
+
+    elif slot_state.state == GameState.NORMAL and slot_state.reg_pending:
+        random_value, role = -1, Role.REG
+
     else:
         random_value, role = lottery(slot_state.state)
-        if slot_state.state == GameState.NORMAL and role == Role.BIG:
-            slot_state.big_pending = True
-            new_big_hit = True
+
+        if slot_state.state == GameState.NORMAL and role in (Role.BIG, Role.REG):
+            if role == Role.BIG:
+                slot_state.big_pending = True
+                new_big_hit = True
+            else:
+                slot_state.reg_pending = True
+                new_reg_hit = True
+
+            # 50%前告知 / 50%後告知
+            bonus_notice_timing = random.choice(("PRE", "POST"))
+
+            if bonus_notice_timing == "PRE":
+                slot_state.bonus_lamp_on = True
+
+    if role == Role.BELL:
+        target_line = "右下がり"
+    elif role == Role.REPLAY:
+        target_line = "右上がり"
+    elif role == Role.WATERMELON:
+        target_line = random.choice(("右下がり", "右上がり"))
+    else:
+        target_line = None
 
     return RoundContext(
         state_before=state_before,
@@ -660,7 +779,10 @@ def begin_game(slot_state):
         random_value=random_value,
         role=role,
         new_big_hit=new_big_hit,
-        replay_game=replay_game
+        new_reg_hit=new_reg_hit,
+        replay_game=replay_game,
+        target_line=target_line,
+        bonus_notice_timing=bonus_notice_timing
     )
 
 
@@ -683,35 +805,59 @@ def resolve_stopped_game(
         slot_state.replay_pending = True
 
     big_hit = any(symbol == "7" for _, symbol, _ in wins)
-    big_started = False
-    big_carried = False
-    big_ended = False
+    reg_hit = any(symbol == "BAR" for _, symbol, _ in wins)
 
-    if (
-        round_context.state_before == GameState.NORMAL
-        and slot_state.big_pending
-        and big_hit
-    ):
-        slot_state.state = GameState.BIG
-        slot_state.big_pending = False
-        slot_state.big_payout = 0
-        slot_state.replay_pending = False
-        big_started = True
+    big_started = big_carried = big_ended = False
+    reg_started = reg_carried = reg_ended = False
 
-    elif (
-        round_context.state_before == GameState.NORMAL
-        and slot_state.big_pending
-        and not big_hit
-    ):
-        big_carried = True
+    if round_context.state_before == GameState.NORMAL:
+        if slot_state.big_pending:
+            if big_hit:
+                slot_state.state = GameState.BIG
+                slot_state.big_pending = False
+                slot_state.big_payout = 0
+                slot_state.replay_pending = False
+                slot_state.bonus_lamp_on = False
+                big_started = True
+            else:
+                big_carried = True
+
+        elif slot_state.reg_pending:
+            if reg_hit:
+                slot_state.state = GameState.REG
+                slot_state.reg_pending = False
+                slot_state.reg_payout = 0
+                slot_state.replay_pending = False
+                slot_state.bonus_lamp_on = False
+                reg_started = True
+            else:
+                reg_carried = True
 
     elif round_context.state_before == GameState.BIG:
         slot_state.big_payout += total_payout
+
         if slot_state.big_payout >= BIG_TARGET_PAYOUT:
             slot_state.state = GameState.NORMAL
             slot_state.big_payout = 0
             slot_state.replay_pending = False
             big_ended = True
+
+    elif round_context.state_before == GameState.REG:
+        slot_state.reg_payout += total_payout
+
+        if slot_state.reg_payout >= REG_TARGET_PAYOUT:
+            slot_state.state = GameState.NORMAL
+            slot_state.reg_payout = 0
+            slot_state.replay_pending = False
+            reg_ended = True
+
+    # 後告知：第3停止後にCHANCEランプ点灯
+    if (
+        round_context.state_before == GameState.NORMAL
+        and round_context.bonus_notice_timing == "POST"
+        and (slot_state.big_pending or slot_state.reg_pending)
+    ):
+        slot_state.bonus_lamp_on = True
 
     return RoundResult(
         current_positions=list(current_positions),
@@ -725,7 +871,11 @@ def resolve_stopped_game(
         big_hit=big_hit,
         big_started=big_started,
         big_carried=big_carried,
-        big_ended=big_ended
+        big_ended=big_ended,
+        reg_hit=reg_hit,
+        reg_started=reg_started,
+        reg_carried=reg_carried,
+        reg_ended=reg_ended
     )
 
 

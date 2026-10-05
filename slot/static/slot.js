@@ -4,10 +4,37 @@ const timers = [null, null, null];
 const stopped = [true, true, true];
 const roundSlides = [null, null, null];
 
+let gameActive = false;
+let startPending = false;
+
+const PAY_LINE_CELLS = {
+    "上段": [[0, 0], [1, 0], [2, 0]],
+    "中段": [[0, 1], [1, 1], [2, 1]],
+    "下段": [[0, 2], [1, 2], [2, 2]],
+    "右下がり": [[0, 0], [1, 1], [2, 2]],
+    "右上がり": [[0, 2], [1, 1], [2, 0]],
+    "左中段": [[0, 1]]
+};
+
 const startButton = document.getElementById("start-button");
 const resetButton = document.getElementById("reset-button");
 const stopButtons = [...document.querySelectorAll(".stop-button")];
 const message = document.getElementById("message");
+
+function symbolHtml(symbol) {
+    const images = {
+        "7": "/static/images/7図柄.png",
+        "ベル": "/static/images/ベル図柄.png",
+        "チェリー": "/static/images/チェリー図柄.png",
+        "スイカ": "/static/images/スイカ図柄.png",
+        "リプレイ": "/static/images/リプレイ図柄.png",
+        "BAR": "/static/images/bar図柄.png"
+    };
+
+    if (!images[symbol]) return symbol;
+
+    return `<img class="slot-symbol-image" src="${images[symbol]}" alt="${symbol}">`;
+}
 
 function renderReel(reelIndex) {
     const reel = reels[reelIndex];
@@ -15,30 +42,63 @@ function renderReel(reelIndex) {
     const upper = (center - 1 + reel.length) % reel.length;
     const lower = (center + 1) % reel.length;
 
-    document.getElementById(`symbol-${reelIndex}-0`).textContent = reel[upper];
-    document.getElementById(`symbol-${reelIndex}-1`).textContent = reel[center];
-    document.getElementById(`symbol-${reelIndex}-2`).textContent = reel[lower];
+    document.getElementById(`symbol-${reelIndex}-0`).innerHTML = symbolHtml(reel[upper]);
+    document.getElementById(`symbol-${reelIndex}-1`).innerHTML = symbolHtml(reel[center]);
+    document.getElementById(`symbol-${reelIndex}-2`).innerHTML = symbolHtml(reel[lower]);
 }
 
 function renderAllReels() {
     for (let i = 0; i < 3; i++) renderReel(i);
 }
 
+function clearWinHighlights() {
+    document.querySelectorAll(".symbol").forEach(cell => {
+        cell.classList.remove("win-highlight", "big-highlight");
+    });
+}
+
+function highlightWins(wins) {
+    clearWinHighlights();
+
+    wins.forEach(win => {
+        const cells = PAY_LINE_CELLS[win.line] || [];
+
+        cells.forEach(([reelIndex, row]) => {
+            const cell = document.getElementById(`symbol-${reelIndex}-${row}`);
+
+            if (!cell) return;
+
+            cell.classList.add(
+                win.symbol === "7" ? "big-highlight" : "win-highlight"
+            );
+        });
+    });
+}
+
 function updateState(state) {
     document.getElementById("credit").textContent = state.credit;
     document.getElementById("mode").textContent = state.mode;
+    
+    const chanceLamp = document.getElementById("chance-lamp");
+
+    if (state.bonus_lamp_on) {
+        chanceLamp.classList.add("on");
+    } else {
+        chanceLamp.classList.remove("on");
+    }
 
     const bonus = document.getElementById("bonus-state");
     const replay = document.getElementById("replay-state");
     const bigProgress = document.getElementById("big-progress");
 
-    bonus.hidden = !state.big_pending;
+    bonus.hidden = !state.bonus_lamp_on;
     replay.hidden = !state.replay_pending;
     bigProgress.hidden = state.mode !== "BIG BONUS";
     document.getElementById("big-payout").textContent = state.big_payout;
 
     startButton.disabled = !state.can_start;
 }
+
 
 function renderSlides() {
     const text = roundSlides.map(value => value === null ? "-" : value).join(" / ");
@@ -100,6 +160,9 @@ function enableRemainingStops() {
 }
 
 async function startGame() {
+    if (gameActive || startPending) return;
+
+    startPending = true;
     startButton.disabled = true;
     resetButton.disabled = true;
     stopButtons.forEach(button => button.disabled = true);
@@ -112,6 +175,7 @@ async function startGame() {
         const data = await response.json();
 
         if (!response.ok || !data.ok) {
+            startPending = false;
             message.textContent = data.message || "STARTに失敗しました。";
             startButton.disabled = false;
             resetButton.disabled = false;
@@ -121,10 +185,13 @@ async function startGame() {
         updateState(data.state);
         updateDebug(data.debug);
         message.textContent = data.message;
-
+        gameActive = true;
+        startPending = false;
+        
         for (let i = 0; i < 3; i++) startAnimation(i);
         enableRemainingStops();
     } catch (error) {
+        startPending = false;
         console.error(error);
         message.textContent = "サーバーとの通信に失敗しました。";
         startButton.disabled = false;
@@ -170,11 +237,12 @@ async function stopReel(reelIndex) {
             enableRemainingStops();
             return;
         }
-
+        gameActive = false;
         // 右リール停止でゲーム確定。
         updateState(data.state);
         updateDebug(data.debug);
         message.textContent = data.message;
+        highlightWins(data.wins || []);
         stopButtons.forEach(button => button.disabled = true);
         resetButton.disabled = false;
         startButton.disabled = !data.state.can_start;
@@ -187,6 +255,10 @@ async function stopReel(reelIndex) {
 }
 
 async function resetGame() {
+    gameActive = false;
+    startPending = false;
+
+    clearWinHighlights();
     stopAllAnimations();
     stopButtons.forEach(button => button.disabled = true);
     startButton.disabled = true;
