@@ -291,3 +291,28 @@ button:disabled {
 .chance-star {
     margin-right: 6px;
 }
+
+.test-panel {
+    margin-top: 18px;
+    padding: 14px;
+    border: 1px solid #cbd5e1;
+    border-radius: 10px;
+    background: #f8fafc;
+}
+
+.test-title {
+    margin-bottom: 8px;
+    font-weight: bold;
+}
+
+.test-panel select,
+.test-panel button {
+    padding: 8px 10px;
+    margin: 4px;
+}
+
+#test-setting-message {
+    margin-top: 8px;
+    font-size: 14px;
+    color: #475569;
+}

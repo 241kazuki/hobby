@@ -290,6 +290,30 @@ async function resetGame() {
     }
 }
 
+const testSettingButton = document.getElementById("test-setting-button");
+
+testSettingButton.addEventListener("click", async () => {
+    const role = document.getElementById("test-role").value;
+    const notice = document.getElementById("test-notice").value;
+
+    try {
+        const response = await fetch("/api/test-setting", {
+            method: "POST",
+            headers: {"Content-Type": "application/json"},
+            body: JSON.stringify({role, notice})
+        });
+
+        const data = await response.json();
+
+        document.getElementById("test-setting-message").textContent =
+            data.message || "設定しました。";
+    } catch (error) {
+        console.error(error);
+        document.getElementById("test-setting-message").textContent =
+            "試打設定に失敗しました。";
+    }
+});
+
 startButton.addEventListener("click", startGame);
 resetButton.addEventListener("click", resetGame);
 

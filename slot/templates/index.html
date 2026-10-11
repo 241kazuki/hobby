@@ -60,7 +60,32 @@
             <div>BET：<span id="debug-bet">-</span></div>
             <div>滑り：<span id="debug-slides">- / - / -</span> コマ</div>
         </section>
-
+        <div class="test-panel">
+            <div class="test-title">試打モード</div>
+        
+            <select id="test-role">
+                <option value="RANDOM">通常抽選</option>
+                <option value="BIG">BIG</option>
+                <option value="REG">REG</option>
+                <option value="BELL">ベル</option>
+                <option value="CHERRY">チェリー</option>
+                <option value="WATERMELON">スイカ</option>
+                <option value="REPLAY">リプレイ</option>
+                <option value="MISS">ハズレ</option>
+            </select>
+        
+            <select id="test-notice">
+                <option value="RANDOM">告知ランダム</option>
+                <option value="PRE">前告知</option>
+                <option value="POST">後告知</option>
+            </select>
+        
+            <button type="button" id="test-setting-button">
+                次ゲームに設定
+            </button>
+        
+            <div id="test-setting-message"></div>
+        </div>
         <section class="controls">
             <button class="start-button" id="start-button" {% if not state.can_start %}disabled{% endif %}>
                 START

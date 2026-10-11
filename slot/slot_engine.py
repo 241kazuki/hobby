@@ -723,7 +723,7 @@ def can_start_game(slot_state):
     return slot_state.replay_pending or slot_state.credit >= required_bet(slot_state)
 
 
-def begin_game(slot_state):
+def begin_game(slot_state, forced_role=None, forced_notice_timing=None):
     if not can_start_game(slot_state):
         raise ValueError("CREDITが不足しています。")
 
@@ -739,13 +739,19 @@ def begin_game(slot_state):
 
     new_big_hit = False
     new_reg_hit = False
-    bonus_notice_timing = None
+    if forced_notice_timing in ("PRE", "POST"):
+        bonus_notice_timing = forced_notice_timing
+    else:
+        bonus_notice_timing = random.choice(("PRE", "POST"))
 
     if slot_state.state == GameState.NORMAL and slot_state.big_pending:
         random_value, role = -1, Role.BIG
 
     elif slot_state.state == GameState.NORMAL and slot_state.reg_pending:
         random_value, role = -1, Role.REG
+
+    elif slot_state.state == GameState.NORMAL and forced_role is not None:
+        random_value, role = -2, forced_role
 
     else:
         random_value, role = lottery(slot_state.state)
