@@ -288,6 +288,15 @@ button:disabled {
         inset 0 0 8px #fde68a;
 }
 
+.chance-lamp.on {
+    background: #fef08a;
+    color: #b45309;
+    border-color: #f59e0b;
+    box-shadow:
+        0 0 14px #fbbf24,
+        inset 0 0 8px #fde68a;
+}
+
 .chance-star {
     margin-right: 6px;
 }

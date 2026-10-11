@@ -47,7 +47,6 @@ def state_json():
         "can_start": can_start_game(slot_state),
     }
 
-
 def debug_role_name(role):
     if role in (Role.BIG, Role.REG):
         return "BONUS"
@@ -127,22 +126,51 @@ def index():
 
 @app.post("/api/start")
 def start_game():
-    global active_context, pressed_positions, stopped_positions
+    global active_context
+    global pressed_positions, stopped_positions
     global round_slides, stop_order
-    global forced_role, forced_notice_timing
 
     if active_context is not None:
-        return jsonify({"ok": False, "message": "すでにリールが回転中です。"}), 409
+        return jsonify({
+            "ok": False,
+            "message": "すでにリールが回転中です。"
+        }), 409
+
     if not can_start_game(slot_state):
-        return jsonify({"ok": False, "message": "CREDITが不足しています。"}), 400
+        return jsonify({
+            "ok": False,
+            "message": "CREDITが不足しています。"
+        }), 400
+
+    data = request.get_json(silent=True) or {}
+
+    role_name = data.get("test_role", "RANDOM")
+    notice_name = data.get("test_notice", "RANDOM")
+
+    role_map = {
+        "BIG": Role.BIG,
+        "REG": Role.REG,
+        "BELL": Role.BELL,
+        "CHERRY": Role.CHERRY,
+        "WATERMELON": Role.WATERMELON,
+        "REPLAY": Role.REPLAY,
+        "MISS": Role.MISS,
+    }
+
+    forced_role = role_map.get(role_name)
+
+    forced_notice_timing = (
+        notice_name
+        if notice_name in ("PRE", "POST")
+        else None
+    )
 
     active_context = begin_game(
         slot_state,
         forced_role=forced_role,
         forced_notice_timing=forced_notice_timing
     )
-    forced_role = None
-    forced_notice_timing = None
+
     pressed_positions = [None, None, None]
     stopped_positions = [None, None, None]
     round_slides = [None, None, None]
@@ -315,34 +343,3 @@ def debug_role_name(role):
 if __name__ == "__main__":
     app.run(debug=True)
 
-@app.post("/api/test-setting")
-def test_setting():
-    global forced_role, forced_notice_timing
-
-    data = request.get_json() or {}
-    role_name = data.get("role", "RANDOM")
-    notice = data.get("notice", "RANDOM")
-
-    role_map = {
-        "BIG": Role.BIG,
-        "REG": Role.REG,
-        "BELL": Role.BELL,
-        "CHERRY": Role.CHERRY,
-        "WATERMELON": Role.WATERMELON,
-        "REPLAY": Role.REPLAY,
-        "MISS": Role.MISS,
-    }
-
-    forced_role = role_map.get(role_name)
-    forced_notice_timing = notice if notice in ("PRE", "POST") else None
-
-    role_text = forced_role.value if forced_role else "通常抽選"
-    notice_text = {
-        "PRE": "前告知",
-        "POST": "後告知",
-    }.get(forced_notice_timing, "ランダム")
-
-    return jsonify({
-        "ok": True,
-        "message": f"次ゲーム：{role_text} / {notice_text}"
-    })

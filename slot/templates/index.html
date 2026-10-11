@@ -29,10 +29,10 @@
             <div class="wide" id="big-progress" {% if state.mode != "BIG BONUS" %}hidden{% endif %}>
                 BIG：<span id="big-payout">{{ state.big_payout }}</span> / {{ state.big_target }}
             </div>
-            <div class="chance-lamp{% if state.bonus_lamp_on %} on{% endif %}"
-                id="chance-lamp">
+            <div class="chance-lamp" id="chance-lamp">
                 <span class="chance-star">★</span>
                 <span>CHANCE!</span>
+            </div>
             </div>
         </section>
         
@@ -79,12 +79,6 @@
                 <option value="PRE">前告知</option>
                 <option value="POST">後告知</option>
             </select>
-        
-            <button type="button" id="test-setting-button">
-                次ゲームに設定
-            </button>
-        
-            <div id="test-setting-message"></div>
         </div>
         <section class="controls">
             <button class="start-button" id="start-button" {% if not state.can_start %}disabled{% endif %}>

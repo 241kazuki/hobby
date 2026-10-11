@@ -78,7 +78,7 @@ function highlightWins(wins) {
 function updateState(state) {
     document.getElementById("credit").textContent = state.credit;
     document.getElementById("mode").textContent = state.mode;
-    
+
     const chanceLamp = document.getElementById("chance-lamp");
 
     if (state.bonus_lamp_on) {
@@ -171,7 +171,22 @@ async function startGame() {
     message.textContent = "Pythonで内部抽選中…";
 
     try {
-        const response = await fetch("/api/start", {method: "POST"});
+        const testRole =
+            document.getElementById("test-role")?.value || "RANDOM";
+
+        const testNotice =
+            document.getElementById("test-notice")?.value || "RANDOM";
+
+        const response = await fetch("/api/start", {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json"
+            },
+            body: JSON.stringify({
+                test_role: testRole,
+                test_notice: testNotice
+            })
+        });
         const data = await response.json();
 
         if (!response.ok || !data.ok) {
@@ -289,30 +304,6 @@ async function resetGame() {
         resetButton.disabled = false;
     }
 }
-
-const testSettingButton = document.getElementById("test-setting-button");
-
-testSettingButton.addEventListener("click", async () => {
-    const role = document.getElementById("test-role").value;
-    const notice = document.getElementById("test-notice").value;
-
-    try {
-        const response = await fetch("/api/test-setting", {
-            method: "POST",
-            headers: {"Content-Type": "application/json"},
-            body: JSON.stringify({role, notice})
-        });
-
-        const data = await response.json();
-
-        document.getElementById("test-setting-message").textContent =
-            data.message || "設定しました。";
-    } catch (error) {
-        console.error(error);
-        document.getElementById("test-setting-message").textContent =
-            "試打設定に失敗しました。";
-    }
-});
 
 startButton.addEventListener("click", startGame);
 resetButton.addEventListener("click", resetGame);

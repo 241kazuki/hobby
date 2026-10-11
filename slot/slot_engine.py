@@ -739,36 +739,45 @@ def begin_game(slot_state, forced_role=None, forced_notice_timing=None):
 
     new_big_hit = False
     new_reg_hit = False
-    if forced_notice_timing in ("PRE", "POST"):
-        bonus_notice_timing = forced_notice_timing
-    else:
-        bonus_notice_timing = random.choice(("PRE", "POST"))
+    bonus_notice_timing = None
 
+    # BONUS持ち越しを最優先
     if slot_state.state == GameState.NORMAL and slot_state.big_pending:
         random_value, role = -1, Role.BIG
 
     elif slot_state.state == GameState.NORMAL and slot_state.reg_pending:
         random_value, role = -1, Role.REG
 
+    # 試打指定
     elif slot_state.state == GameState.NORMAL and forced_role is not None:
         random_value, role = -2, forced_role
 
+    # 通常抽選
     else:
         random_value, role = lottery(slot_state.state)
 
-        if slot_state.state == GameState.NORMAL and role in (Role.BIG, Role.REG):
-            if role == Role.BIG:
-                slot_state.big_pending = True
-                new_big_hit = True
-            else:
-                slot_state.reg_pending = True
-                new_reg_hit = True
+    # ここが重要
+    # 試打指定でも通常抽選でも、BONUSなら必ずこの処理を通る
+    if (
+        slot_state.state == GameState.NORMAL
+        and not slot_state.big_pending
+        and not slot_state.reg_pending
+        and role in (Role.BIG, Role.REG)
+    ):
+        if role == Role.BIG:
+            slot_state.big_pending = True
+            new_big_hit = True
+        else:
+            slot_state.reg_pending = True
+            new_reg_hit = True
 
-            # 50%前告知 / 50%後告知
+        if forced_notice_timing in ("PRE", "POST"):
+            bonus_notice_timing = forced_notice_timing
+        else:
             bonus_notice_timing = random.choice(("PRE", "POST"))
 
-            if bonus_notice_timing == "PRE":
-                slot_state.bonus_lamp_on = True
+        if bonus_notice_timing == "PRE":
+            slot_state.bonus_lamp_on = True
 
     if role == Role.BELL:
         target_line = "右下がり"
