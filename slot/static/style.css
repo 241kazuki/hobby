@@ -13,8 +13,8 @@ body {
 }
 
 .machine {
-    width: min(760px, 94vw);
-    padding: 28px;
+    width: min(1180px, 96vw);
+    padding: 22px;
     border-radius: 18px;
     background: #f8fafc;
     text-align: center;
@@ -324,4 +324,17 @@ button:disabled {
     margin-top: 8px;
     font-size: 14px;
     color: #475569;
+}
+
+
+.video-layout {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 300px;
+    gap: 20px;
+    align-items: start;
+}
+
+.game-side,
+.info-side {
+    min-width: 0;
 }
